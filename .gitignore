@@ -1,0 +1,37 @@
+# Environment. .env.example is tracked and is the documented starting point.
+.env
+.env.*
+!.env.example
+
+# Streamlit. .streamlit/config.toml IS tracked: it pins the theme the charts are
+# validated against, and the app service mounts it.
+.streamlit/secrets.toml
+
+# Cached INMET archives, about 90 MB per year, re-downloadable by `make ingest`.
+# The CEPEA .xls under data/ is tracked: it is a manual download that cannot be
+# fetched automatically.
+data/raw/
+
+# Python. uv.lock IS tracked: the Docker build installs from it with --frozen.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local Docker overrides
+docker-compose.override.yml
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

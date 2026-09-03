@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${PGDATABASE:-farm}
+      POSTGRES_USER: ${PGUSER:-farm}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-farm}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-farm} -d ${PGDATABASE:-farm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${PGDATABASE:-farm}
+      PGUSER: ${PGUSER:-farm}
+      PGPASSWORD: ${PGPASSWORD:-farm}
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./.streamlit:/app/.streamlit
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
