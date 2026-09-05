@@ -62,16 +62,7 @@ def render(station):
         .properties(height=200, title=choice)
     )
     st.altair_chart(
-        alt.vconcat(price_chart, weather_chart)
-        .resolve_scale(x="shared")
-        .configure_axis(
-            gridColor=theme.GRID,
-            domainColor="#c3c2b7",
-            tickColor="#c3c2b7",
-            labelColor=theme.MUTED,
-            titleColor="#52514e",
-        )
-        .configure_view(strokeWidth=0),
+        theme.configure(alt.vconcat(price_chart, weather_chart).resolve_scale(x="shared")),
         width="stretch",
     )
 

@@ -29,9 +29,6 @@ COLUMNS = [
     "hours_observed",
 ]
 
-# A day reporting at least this many hourly temperatures is treated as fully observed.
-FULL_COVERAGE_HOURS = 20
-
 
 def find_column(columns, keyword, member):
     """Return the single column containing keyword, or fail loudly."""
@@ -43,12 +40,20 @@ def find_column(columns, keyword, member):
     return matches[0]
 
 
-def parse_dates(series):
-    """INMET writes YYYY/MM/DD in recent years and DD/MM/YYYY in older ones."""
-    parsed = pd.to_datetime(series, format="%Y/%m/%d", errors="coerce")
-    if parsed.isna().all():
-        parsed = pd.to_datetime(series, format="%d/%m/%Y", errors="coerce")
-    return parsed
+# Archives from 2008 to about 2018 write ISO dates, recent ones use slashes. Failing to
+# match would silently drop every row of a year, so an unmatched file raises instead.
+DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y")
+
+
+def parse_dates(series, member):
+    """Parse the date column, trying each format INMET has used."""
+    for fmt in DATE_FORMATS:
+        parsed = pd.to_datetime(series, format=fmt, errors="coerce")
+        if not parsed.isna().all():
+            return parsed
+    raise ValueError(
+        f"{member}: no date format in {DATE_FORMATS} matched {series.iloc[0]!r}"
+    )
 
 
 def to_numeric(series):
@@ -73,7 +78,7 @@ def aggregate(raw, member):
     temp = find_column(frame.columns, TEMP_KEYWORD, member)
     wind = find_column(frame.columns, WIND_KEYWORD, member)
 
-    frame["date"] = parse_dates(frame.iloc[:, 0])
+    frame["date"] = parse_dates(frame.iloc[:, 0], member)
     frame["rain"] = to_numeric(frame[rain])
     # temp_max and temp_min come from the hourly air temperature rather than the
     # max/min-in-previous-hour columns: one keyword match instead of three, and the
@@ -100,8 +105,7 @@ def aggregate(raw, member):
 
 
 def known_station_codes():
-    with db.get_engine().connect() as connection:
-        return set(pd.read_sql("SELECT code FROM stations", connection)["code"])
+    return set(db.read_sql("SELECT code FROM stations")["code"])
 
 
 def ingest_year(year, codes):

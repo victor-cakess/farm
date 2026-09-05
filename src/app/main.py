@@ -4,6 +4,7 @@ import streamlit as st
 
 from src.app import queries
 from src.app.screens import (
+    my_data,
     price_overview,
     production_impact,
     weather_overview,
@@ -44,7 +45,12 @@ st.sidebar.caption(
 
 page = st.navigation(
     [
-        st.Page(price_overview.render, title="Preco", icon=":material/payments:"),
+        # The first page is the default and is served at "/", so it takes no url_path.
+        st.Page(
+            lambda: price_overview.render(station),
+            title="Preco",
+            icon=":material/payments:",
+        ),
         st.Page(
             lambda: weather_overview.render(station),
             title="Clima local",
@@ -62,6 +68,12 @@ page = st.navigation(
             title="Clima e producao",
             icon=":material/agriculture:",
             url_path="producao",
+        ),
+        st.Page(
+            lambda: my_data.render(station),
+            title="Meus dados",
+            icon=":material/edit_note:",
+            url_path="meus-dados",
         ),
     ]
 )

@@ -70,10 +70,39 @@ A local, dockerized POC that shows Brazilian soy farmers the CEPEA soy price, th
 - Basic layout and navigation across the four screens.
 - README with how to run: bring up compose, run ingestion, open Streamlit.
 
+## Phase 2 - done
+
+Steps 1 to 10 above are complete. Phase 2 added:
+
+11. **Weather backfill to 2008.** 959k daily rows, 203 stations. Older archives use ISO dates and `-9999` sentinels.
+12. **IBGE municipalities and yield.** All 273 stations mapped to a municipality; municipal soy yield 2008-2024 from SIDRA table 1612.
+13. **Agronomic derivations.** Hargreaves ET0, a single-bucket soil water balance, thermal time, and per-season features.
+14. **Screen 4 made quantitative.** Detrended municipal yield against the season measures, with the station's correlation and the region's consistency beside it.
+15. **Screen 5, "Meus dados".** Yield and cost per field and season, with an immediate comparison against the municipality. This is the point of the tool: everything else exists to earn the trust to reach it.
+16. **Basis.** DERAL Parana producer prices beside CEPEA Paranagua, so the farmer sees a number closer to the farm gate.
+17. **FX decomposition.** Each monthly move split into bean and dollar, from the two CEPEA series alone.
+18. **INMET five-day forecast**, stored in Postgres with an in-app refresh button.
+19. **Breakeven line**, from the farmer's own cost when present.
+
+## Cleanup pass - done
+
+20. **One schema file.** `db/schema.sql` replaced the init/migrate pair; no `ALTER TABLE`, no migration path, rebuild with `make reset`.
+21. **One database API.** `src/db.py` is the only module that opens a connection.
+22. **A pure domain package.** `src/domain/{seasons,agronomy,analysis}.py`, free of I/O, with `src/ingestion` and `src/app` depending on it and not on each other.
+23. **Tests and linting.** 53 pytest cases over the domain and the parsers, plus ruff. Verified by rebuilding the database and matching the previous checksum exactly.
+
+## Next
+
+- **Cost of production from CONAB.** Gated: their portal has no API and the spreadsheets sit behind a download modal, so it needs a manual file and a format spike before a parser is written. Farmer-entered cost already works without it.
+- **Regional prices outside Parana.** No verified automatable source yet for MT, MS, GO or RS. IMEA is a JavaScript app, CEPEA blocks scraping, CONAB has no API. Would need either manual files or a different provider.
+- **NDVI / satellite (Sentinel-2 via Copernicus).** Free imagery, and the thing that would let a farmer see their own fields rather than a municipal average. **Prerequisite: field boundaries**, which is itself a significant data ask, larger than the yield one. Decide after the "Meus dados" loop has real records: if farmers will not enter a yield number, they will not draw field polygons either. Worth revisiting once there is evidence the loop works.
+- **Per-farm analysis.** Once a farmer has 8 or more seasons entered, run the same detrend-and-compare on their own numbers instead of the municipality's. The code path already exists; only the data source changes.
+
 ## Out of scope
 
 - Sell recommendations.
-- Any forecasting (weather or price).
+- Price forecasting.
+- Any weather forecast beyond republishing INMET's own five days.
 - Cloud deployment.
 - Auth or multi-user.
 - Real-time data.

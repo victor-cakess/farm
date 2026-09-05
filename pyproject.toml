@@ -13,5 +13,24 @@ dependencies = [
     "xlrd>=2.0",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
 [tool.uv]
 package = false
+
+[tool.ruff]
+# The width the code was already written to.
+line-length = 92
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, isort, bugbear, comprehensions, pyupgrade.
+select = ["E", "F", "I", "B", "C4", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The project is not installed as a package, so the root has to be importable for `src`.
+pythonpath = ["."]

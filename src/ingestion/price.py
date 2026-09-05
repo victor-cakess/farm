@@ -42,14 +42,11 @@ def main():
         for row in frame.itertuples(index=False)
     ]
 
-    count = db.upsert(
-        "price_daily", ["date", "price_brl", "price_usd"], rows, ["date"]
-    )
+    count = db.upsert("price_daily", ["date", "price_brl", "price_usd"], rows, ["date"])
     print(f"upserted {count} price rows")
     print(f"range {frame['date'].min().date()} to {frame['date'].max().date()}")
     print(
-        f"price_brl min {frame['price_brl'].min():.2f} "
-        f"max {frame['price_brl'].max():.2f}"
+        f"price_brl min {frame['price_brl'].min():.2f} max {frame['price_brl'].max():.2f}"
     )
 
 

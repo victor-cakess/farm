@@ -33,12 +33,42 @@ A local, dockerized proof of concept for Brazilian soy farmers. It shows CEPEA s
 - CSV format: `;` separator, `,` decimal, latin-1 encoding.
 - First 8 rows are station metadata (region, uf, station name, WMO code, lat, lon, altitude, founding date). The real header row is row index 8.
 - Records are hourly. Aggregate to daily.
-- Column names carry units and vary across years. Match by keyword, not exact string. Examples: rain contains "PRECIPITA", air temperature contains "TEMPERATURA DO AR", wind speed contains "VELOCIDADE HORARIA".
+- Column names carry units and vary across years. Match by keyword, not exact string. Examples: rain contains "PRECIPITA", air temperature contains "TEMPERATURA DO AR", wind speed contains "VELOCIDADE HORARIA". The keyword matches are unique in both the 2010 and 2025 layouts.
 - There is a trailing empty "Unnamed" column from line-ending semicolons. Drop it.
+- **The date format changes across years.** Archives from around 2008 to 2018 write `2010-01-01` and an hour column of `00:00`; recent ones write `2025/01/01` and `0000 UTC`. Try `%Y-%m-%d`, then `%Y/%m/%d`, then `%d/%m/%Y`, and raise if none match: a silent mismatch drops every row of a year.
+- Older archives use `-9999` as a missing-value sentinel; recent ones use empty strings. Handle both.
+- Archives exist from 2000, but the automatic network only fills out from about 2007. Sizes run 40-112 MB per year.
 
 ### INMET station list
 - URL: `https://apitempo.inmet.gov.br/estacoes/T` returns JSON of automatic stations.
 - Useful fields: CD_ESTACAO, DC_NOME, SG_ESTADO (or UF field), VL_LATITUDE, VL_LONGITUDE.
+
+### INMET forecast
+- URL: `https://apiprevmet3.inmet.gov.br/previsao/{ibge_code}`, keyed by IBGE municipality code. Needs the browser User-Agent like the other INMET hosts.
+- Returns **five days, not seven**. INMET publishes no longer product; do not imply one.
+- Days 1 and 2 are split into `manha` / `tarde` / `noite`; days 3 to 5 are a single flat block. Sort periods explicitly, since alphabetical order puts `noite` before `tarde`.
+- Fields: `resumo`, `temp_max`, `temp_min`, `umidade_max`, `umidade_min`, `dir_vento`, `int_vento`, `cod_icone`, `icone`. There is **no rain amount and no rain probability**, only the text summary.
+- `icone` is a base64 PNG of roughly 50 KB per period. Store `cod_icone` only.
+- An unknown municipality still returns **HTTP 200** with empty period dicts, so validate by content, not status.
+
+### IBGE
+- Municipality list: `https://servicodados.ibge.gov.br/api/v1/localidades/municipios`, 5,571 rows, no User-Agent needed. UF is at `microrregiao.mesorregiao.UF.sigla`, but some rows have a null `microrregiao`; fall back to `regiao-imediata.regiao-intermediaria.UF.sigla`.
+- Municipal soy yield (PAM): `https://apisidra.ibge.gov.br/values/t/1612/n6/in n3 {uf_code}/v/112,216,214/p/{first}-{last}/c81/2713?formato=json`. Table 1612 is temporary crops, `c81/2713` is soy in grain, `n6` is municipality. Variables: 112 yield kg/ha, 216 harvested area ha, 214 production t. UF codes: PR 41, RS 43, MS 50, MT 51, GO 52.
+- **Row 0 is a header row of labels, not data.** Fields: `D1C` municipality code, `D3C` year, `D2C` variable, `V` value. Missing values are the string `-`.
+- Years 2008-2024 are available; IBGE publishes annually and in arrears, so the current season has no yield yet.
+- `D1N` is formatted differently in single-municipality and bulk queries; join on `D1C`.
+- Station names are not municipality names. Normalising (strip accents, cut at ` - ` or `(`) plus UF matches 265 of 273 stations; the remaining 8 are hand-mapped in `src/ingestion/municipalities.py`.
+
+### DERAL / SEAB Parana producer prices
+- `https://www.agricultura.pr.gov.br/system/files/publico/Precos/sh95recebido.xls` and `.../prp.xls`. OLE2, same `xlrd` corruption override as the CEPEA file.
+- **This host also drops the connection for the default `requests` User-Agent** (verified: curl exit 52 with `python-requests/2.31.0`, HTTP 200 with a browser one). Send the browser agent.
+- `sh95recebido.xls`: 38 sheets, one per product. Sheet `SOJA` is the monthly state average received by producers, R$ per 60 kg, 1995 onwards. Header at row 7 (`ANO`, `JAN`..`DEZ`), data from row 8 until a blank year, then footer rows starting `Obs.:` / `Fonte:`. Unpublished months are blank.
+- `prp.xls`: one sheet, current week by regional. The week is in cell `(0, 15)` as `PERIODO: 31/08/2026 a 04/09/2026`. Regional names are row 1 from column 3; the `Soja` row is labelled in column 1. Skip the `MEDIA`, `MSA` and `%MSA` aggregate columns, comparing accent-free (the sheet writes `MÉDIA`).
+
+### Sources that are not automatable
+- CEPEA site returns HTTP 403 even with a browser User-Agent. The price file stays a manual download.
+- IMEA is a Vue application with no data links in the HTML.
+- CONAB's portal is an Angular app with no API in its bundle; cost spreadsheets sit behind a download modal. Cost of production is therefore a manual file plus farmer entry.
 
 ### CEPEA soy price
 - Manually downloaded Excel (Indicador Soja CEPEA/ESALQ Paranagua, daily periodicity).
@@ -58,27 +88,62 @@ From hourly INMET data, per station per day:
 - wind_mean: mean of hourly wind speed
 - frost_flag: true if daily min temperature is at or below a threshold (default 3 C, make it a constant that is easy to change). Note in a comment that this is a rough proxy, since station air temp is measured in a shelter and real ground frost can occur a few degrees above zero.
 
+## Derived measures
+
+- `et0_mm`: FAO-56 Hargreaves reference evapotranspiration, from Tmax/Tmin/Tmean and the station latitude. No new inputs required.
+- `soil_water_mm`: single bucket, 100 mm capacity, starting at 50 mm, `store = clamp(store + rain - et0, 0, 100)`. A day missing rain or ET0 leaves the store untouched and records NULL, so a gap never reads as drying soil. No crop coefficient and no soil survey: it describes the weather, not a field.
+- `gdd`: soy thermal time, base 10 C, **both** Tmax and Tmin clipped into [10, 30]. Clipping only Tmax lets a tropical night push a day past the theoretical daily maximum.
+- `season_features`: one row per station per harvest year. A season labelled Y runs 1 Oct (Y-1) to 30 Apr Y, which is the year IBGE reports the harvest against. `sufficient` is false when the station reported under half the season; insufficient seasons are excluded from every comparison, never quietly averaged in.
+
+## Which weather measure actually tracks yield
+
+Measured over 1,612 season-observations across 122 stations, correlation with detrended municipal yield:
+
+| measure | pooled r | per-station median r | share negative |
+|---|---|---|---|
+| water_deficit_days | -0.216 | -0.264 | 77% |
+| heat_days | -0.189 | -0.393 | 83% |
+| longest_dry_spell_days | -0.024 | -0.089 | 66% |
+| dry_spell_jan_mar_days | -0.043 | -0.103 | 59% |
+
+Days of soil water deficit and days above 34 C track yield; **runs of days without rain barely do**. Do not build a drought claim on consecutive dry days. Municipal yield must be detrended before any comparison, because it rises over time with technology.
+
 ## Database
 
-Three tables, kept simple:
-- stations: code, name, uf, latitude, longitude
-- weather_daily: station_code, date, rain_mm, temp_mean, temp_max, temp_min, wind_mean, frost_flag, hours_observed
+Tables, kept simple:
+- stations: code, name, uf, latitude, longitude, ibge_code
+- weather_daily: station_code, date, rain_mm, temp_mean, temp_max, temp_min, wind_mean, frost_flag, hours_observed, et0_mm, soil_water_mm, gdd
 - price_daily: date, price_brl, price_usd
+- municipalities, yield_municipal, season_features, price_monthly_pr, price_weekly_pr, forecast, farm_records, cost_reference
 
-One init script to create them. Ingestion scripts upsert into them.
+`db/schema.sql` is the whole schema and the only DDL. Postgres runs it once on an empty volume. There is no migration path and no `ALTER TABLE`: to change the schema, edit the file and run `make reset` then `make ingest`. Every loader upserts, so the data is reproducible from cached sources.
+
+## Code layout rules
+
+- `src/db.py` is the only module that talks to Postgres. Use `read_sql`, `execute`, `execute_many`, `upsert`; do not open connections elsewhere.
+- `src/domain/` holds pure functions only: no database, no network, no file reads. This is what makes it testable, and it is where the season definition, the agronomic maths and the yield analysis live. Ingestion and the app both depend on it; it depends on neither.
+- The screens import `src.app.queries` and nothing else. When a screen needs to trigger ingestion, add a wrapper in `queries` rather than importing a loader.
+- `make test` covers `src/domain` and the parsers and needs no database. `make lint` must pass.
 
 ## Streamlit screens
 
-1. Price overview: price over time (toggle R$ / US$), average price by month to show seasonality.
-2. Local weather overview: station selector, daily rain / temp max-min / wind charts, frost days flagged.
+1. Price overview: price over time (toggle R$ / US$), the monthly pattern as each month's deviation from its own year's mean, Paranagua against DERAL's Parana producer price (the basis), the split of each move into bean and dollar, and a breakeven line when a cost is known.
+2. Local weather overview: station selector, the INMET five-day forecast with a refresh button, daily rain / temp max-min / wind charts, frost days flagged, and the reference soil water balance.
 3. Weather vs price: selected station weather and price on a shared time axis, a correlation figure, and a clear plain-language note that seasonality is the likely shared driver and that local weather does not set the Paranagua price.
-4. Weather impact on production (qualitative): narrative on how frost, drought, excess rain, and heat at key growth stages affect soy yield, anchored to the selected station's recent season, framed as what can be quantified once the farmer shares yield data.
+4. Weather impact on production: municipal yield from IBGE, detrended, against the season measures from the station, with the station's own correlation and how consistently the region agrees. Then the season's counts, then the qualitative mechanisms.
+5. My data: the farmer enters yield and optional cost per field and season, and immediately sees it against the municipal average and the season's weather.
 
 ## The app reads from Postgres
 
 Ingestion writes to Postgres. Streamlit reads from Postgres. The app should not parse source files at runtime.
 
+Two exceptions, both deliberate and both going through the same ingestion functions the CLI uses: the forecast refresh button, and saving or deleting a farmer's own records.
+
 ## Honesty constraints for the content
 
 - The weather-to-price link must be presented honestly. A single station's weather does not drive the Paranagua price. Any correlation shown is most likely seasonal coincidence. Do not word any screen to imply local weather sets price.
-- Screen 4 is qualitative because there is no yield data yet. Do not fabricate a quantitative production analysis.
+- Screen 4's quantitative part uses the **municipality average** from IBGE. It is never the farmer's own yield, and it is association across seasons, never a causal estimate or a loss figure for a field.
+- Withhold rather than caveat. A number the data cannot support is not shown at all: no comparison under 8 sufficient seasons, no correlation where the measure barely varies, no season counts where the station reported under half the season, no group mean with fewer than 3 seasons in it. A caveat under a confident-looking figure does not get read.
+- When one station's correlation disagrees with the regional majority, say so plainly. Two numbers pointing opposite ways with no explanation is worse than either one alone.
+- The forecast is INMET's five days, presented as theirs and dated. Never extend it, average it, or turn its text into millimetres.
+- The basis series is Parana. For a station in another state, say on screen that it is an illustration and not that state's price.
